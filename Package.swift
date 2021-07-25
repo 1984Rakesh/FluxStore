@@ -12,5 +12,8 @@ let package = Package(
     dependencies: [],
     targets: [
         .target(name: "FluxStore", dependencies: [])
+    ],
+    swiftLanguageVersions: [
+        .version("5.2")
     ]
 )

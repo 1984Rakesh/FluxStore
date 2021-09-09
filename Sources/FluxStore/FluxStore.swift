@@ -1,6 +1,7 @@
 
 import Foundation
 import Combine
+import UIKit
 
 public typealias Reducer<State,Action> = (_ state:inout State, _ action: Action) -> [Effect<Action>]
 
@@ -44,11 +45,13 @@ public class Store<State,Action>:  ObservableObject {
         effects.forEach { effect in
             var effectCancellable: AnyCancellable?
             effectCancellable = effect.sink(
-                receiveCompletion: { [weak self] _ in
+                receiveCompletion: { [weak self, weak effectCancellable] _ in
                     guard let effectCancellable = effectCancellable else { return }
                     self?.effectCancellables.remove(effectCancellable)
                 },
-                receiveValue: { self.dispatch($0) }
+                receiveValue: { [weak self] in
+                    self?.dispatch($0)
+                }
             )
             if let cancellable = effectCancellable {
                 self.effectCancellables.insert(cancellable)
@@ -56,12 +59,13 @@ public class Store<State,Action>:  ObservableObject {
         }
     }
     
-    public func view<LocalState,LocalAction>(
+    public func scope<LocalState,LocalAction>(
         localState getLocalState:@escaping (State)->LocalState,
         globalAction getGlobalAction:@escaping (LocalAction) -> Action
     ) -> Store<LocalState,LocalAction> {
         let localStore = Store<LocalState,LocalAction>( getLocalState(state)) { localState, localAction in
             self.dispatch(getGlobalAction(localAction))
+            //Local State is inout param here 
             localState = getLocalState(self.state)
             return []
         }
@@ -72,6 +76,41 @@ public class Store<State,Action>:  ObservableObject {
         
         localStore.viewCancellable = cancellable
         return localStore
+    }
+}
+
+public extension Store where State: Equatable  {
+    var view: ViewStore<State,Action> {
+        let viewStore = ViewStore(state: self.state, dispatch: self.dispatch )
+        
+        viewStore.cancellable = self.$state
+            .removeDuplicates()
+            .sink { [weak viewStore] in viewStore?.state = $0 }
+        
+        return viewStore
+    }
+}
+
+public extension Store {
+    func view(removeDuplicates predicate: @escaping (State, State) -> Bool ) -> ViewStore<State,Action> {
+        let viewStore = ViewStore(state: self.state, dispatch: self.dispatch)
+        
+        viewStore.cancellable = self.$state
+            .removeDuplicates(by: predicate)
+            .sink{ [weak viewStore] in viewStore?.state = $0 }
+        
+        return viewStore
+    }
+}
+
+public final class ViewStore<State,Action> : ObservableObject {
+    @Published public fileprivate(set) var state: State
+    public let dispatch: (Action) -> Void
+    fileprivate var cancellable: AnyCancellable?
+    
+    public init(state: State, dispatch: @escaping (Action) -> Void ) {
+        self.state = state
+        self.dispatch = dispatch
     }
 }
 
